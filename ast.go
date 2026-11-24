@@ -662,6 +662,8 @@ type MatrixCombination struct {
 	Assigns map[string]*MatrixAssign
 	// Expression is a string when expression syntax ${{ }} is used for this section.
 	Expression *String
+	// Pos is the position of the whole combination item.
+	Pos *Pos
 }
 
 // MatrixCombinations is list of combinations of matrix assignments used for 'include' and 'exclude'

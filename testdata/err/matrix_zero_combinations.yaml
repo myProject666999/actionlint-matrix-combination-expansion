@@ -1,0 +1,13 @@
+on: push
+jobs:
+  test:
+    strategy:
+      matrix:
+        os: [ubuntu-latest]
+        node: [16]
+        exclude:
+          - os: ubuntu-latest
+            node: 16
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo hello

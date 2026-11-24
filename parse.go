@@ -905,7 +905,7 @@ func (p *parser) parseMatrixCombinations(sec string, n *yaml.Node) *MatrixCombin
 		}
 	}
 
-	if ok := p.checkSequence(sec, n, false); !ok {
+	if ok := p.checkSequence(sec, n, sec == "exclude"); !ok {
 		return nil
 	}
 
@@ -913,18 +913,19 @@ func (p *parser) parseMatrixCombinations(sec string, n *yaml.Node) *MatrixCombin
 	for _, c := range n.Content {
 		if c.Kind == yaml.ScalarNode {
 			if e := p.parseExpression(c, "mapping of matrix combination"); e != nil {
-				ret = append(ret, &MatrixCombination{Expression: e})
+				ret = append(ret, &MatrixCombination{Expression: e, Pos: posAt(c)})
 			}
 			continue
 		}
 
 		assigns := map[string]*MatrixAssign{}
-		for e := range p.parseMapping(sprintf("element in %q section", sec), c, false, false) {
+		// An empty object such as "include: [{}]" is a valid no-op include entry.
+		for e := range p.parseMapping(sprintf("element in %q section", sec), c, true, false) {
 			if v := p.parseRawYAMLValue(e.val); v != nil {
 				assigns[e.id] = &MatrixAssign{e.key, v}
 			}
 		}
-		ret = append(ret, &MatrixCombination{Assigns: assigns})
+		ret = append(ret, &MatrixCombination{Assigns: assigns, Pos: posAt(c)})
 	}
 	return &MatrixCombinations{Combinations: ret}
 }

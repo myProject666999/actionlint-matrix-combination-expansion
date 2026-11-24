@@ -1252,23 +1252,31 @@ test.yaml:6:28: duplicate value "14" is found in matrix "node". the same value i
   |
 6 |         node: [10, 12, 14, 14]
   |                            ^~~
-test.yaml:9:19: value "13" in "exclude" does not match in matrix "node" combinations. possible values are "10", "12", "14", "14" [matrix]
+test.yaml:9:13: "exclude" entry does not match any combination in the base matrix. "exclude" is evaluated before "include", so a value introduced only by "include" cannot be matched here [matrix]
   |
 9 |           - node: 13
-  |                   ^~
-test.yaml:12:13: "platform" in "exclude" section does not exist in matrix. available matrix configurations are "node", "os" [matrix]
+  |             ^~~~~
+test.yaml:11:13: "exclude" entry does not match any combination in the base matrix. "exclude" is evaluated before "include", so a value introduced only by "include" cannot be matched here [matrix]
    |
-12 |             platform: ubuntu-latest
-   |             ^~~~~~~~~
+11 |           - node: 10
+   |             ^~~~~
 ```
 
 [Playground](https://rhysd.github.io/actionlint/#eNpskMGOhCAQRO9+RR32KER298SvmD2gsuNMlDY0JE6M/z4h4jgmHggpqHrpanIaU+S+eFDDugCC5ZBugIM3wd6emwJGE/x93hXgqLMatapKqO8S6jedv/c3sUYdm+hCFINJ2BKjaYmzOpx2bofY2YMMiExXPx+PG/OEvIpUp8g0mPBPfrwK+uhYpA18LUuuJ4mxrrm/nXgfSiSzhm17gpTyFQAA//9UwlNB)
 
 [`matrix:`][matrix-doc] defines combinations of multiple values. Nested `include:` and `exclude:` can add/remove specific
-combination of matrix values. actionlint checks
+combination of matrix values. For statically known matrices, actionlint expands the Cartesian product, applies `exclude:`,
+then applies `include:` as GitHub Actions does. It checks
 
-- values in `exclude:` appear in `matrix:` or `include:`
+- whether each `exclude:` entry matches any base Cartesian combination (`include:` is not considered because it runs later)
+- whether the expanded matrix exceeds GitHub's limit of 256 jobs, or expands to zero combinations
+- whether referenced `matrix.*` properties are defined in the expanded matrix
 - duplicate variations of matrix values
+
+Properties added by only some `include:` combinations are typed with `null`, which currently merges to `any`. An opt-in
+`matrix-partial` diagnostic is available to library users by setting `RuleExpression.WarnPartialMatrixKeys = true`.
+When a matrix contains expressions such as `${{ fromJSON(...) }}`, or mixes object and scalar values for one key, the new
+expansion checks are skipped and the older permissive checks remain.
 
 <a id="check-webhook-events"></a>
 ## Webhook events validation

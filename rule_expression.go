@@ -19,16 +19,20 @@ type typedExpr struct {
 // - https://docs.github.com/en/actions/learn-github-actions/expressions
 type RuleExpression struct {
 	RuleBase
-	matrixTy         *ObjectType
-	stepsTy          *ObjectType
-	needsTy          *ObjectType
-	secretsTy        *ObjectType
-	inputsTy         *ObjectType
-	dispatchInputsTy *ObjectType
-	jobsTy           *ObjectType
-	workflow         *Workflow
-	localActions     *LocalActionsCache
-	localWorkflows   *LocalReusableWorkflowCache
+	matrixTy          *ObjectType
+	partialMatrixKeys map[string]struct{}
+	// WarnPartialMatrixKeys enables opt-in diagnostics for matrix keys which exist only in some
+	// expanded combinations. It is opt-in because such keys are a common and valid include pattern.
+	WarnPartialMatrixKeys bool
+	stepsTy               *ObjectType
+	needsTy               *ObjectType
+	secretsTy             *ObjectType
+	inputsTy              *ObjectType
+	dispatchInputsTy      *ObjectType
+	jobsTy                *ObjectType
+	workflow              *Workflow
+	localActions          *LocalActionsCache
+	localWorkflows        *LocalReusableWorkflowCache
 }
 
 // NewRuleExpression creates new RuleExpression instance.
@@ -272,6 +276,7 @@ func (rule *RuleExpression) VisitJobPost(n *Job) error {
 	}
 
 	rule.matrixTy = nil
+	rule.partialMatrixKeys = nil
 	rule.stepsTy = nil
 	rule.needsTy = nil
 
@@ -773,6 +778,8 @@ func (rule *RuleExpression) exprError(err *ExprError, lineBase, colBase int) {
 }
 
 func (rule *RuleExpression) checkSemanticsOfExprNode(expr ExprNode, line, col int, checkUntrusted bool, workflowKey string) (ExprType, bool) {
+	rule.checkPartialMatrixKeyReferences(expr, line, col)
+
 	var v []string
 	if rule.config != nil {
 		v = rule.config.ConfigVariables
@@ -869,6 +876,55 @@ func (rule *RuleExpression) populateDependantNeedsTypes(out *ObjectType, job *Jo
 	}
 }
 
+func (rule *RuleExpression) checkPartialMatrixKeyReferences(root ExprNode, lineBase, colBase int) {
+	if !rule.WarnPartialMatrixKeys || len(rule.partialMatrixKeys) == 0 {
+		return
+	}
+
+	VisitExprNode(root, func(n ExprNode, _ ExprNode, entering bool) {
+		if !entering {
+			return
+		}
+
+		var key string
+		var tok *Token
+		switch n := n.(type) {
+		case *ObjectDerefNode:
+			v, ok := n.Receiver.(*VariableNode)
+			if !ok || v.Name != "matrix" {
+				return
+			}
+			key = n.Property
+			tok = n.Token()
+		case *IndexAccessNode:
+			v, ok := n.Operand.(*VariableNode)
+			if !ok || v.Name != "matrix" {
+				return
+			}
+			s, ok := n.Index.(*StringNode)
+			if !ok {
+				return
+			}
+			key = s.Value
+			tok = n.Token()
+		default:
+			return
+		}
+
+		if _, ok := rule.partialMatrixKeys[key]; !ok || tok == nil {
+			return
+		}
+
+		pos := convertExprLineColToPos(tok.Line, tok.Column, lineBase, colBase)
+		err := errorAt(
+			pos,
+			"matrix-partial",
+			"matrix property \""+key+"\" exists only in some expanded combinations; it is null/empty in the other combinations",
+		)
+		rule.errs = append(rule.errs, err)
+	})
+}
+
 func (rule *RuleExpression) checkMatrixExpression(expr *String) *ObjectType {
 	ty := rule.checkObjectExpression(expr, "matrix", "jobs.<job_id>.strategy")
 	if ty == nil {
@@ -903,9 +959,13 @@ func (rule *RuleExpression) checkMatrixExpression(expr *String) *ObjectType {
 }
 
 func (rule *RuleExpression) checkMatrix(m *Matrix) *ObjectType {
+	rule.partialMatrixKeys = nil
+
 	if m.Expression != nil {
 		return rule.checkMatrixExpression(m.Expression)
 	}
+
+	exp, staticExpansion := expandMatrix(m)
 
 	// Check types of "exclude" but they are not used to guess type of matrix
 	if m.Exclude != nil {
@@ -966,6 +1026,17 @@ func (rule *RuleExpression) checkMatrix(m *Matrix) *ObjectType {
 				ty = t.Merge(ty)
 			}
 			o.Props[n] = ty
+		}
+	}
+
+	if staticExpansion && exp.enumerated {
+		rule.partialMatrixKeys = exp.partialKeys
+		for k := range exp.partialKeys {
+			if t, ok := o.Props[k]; ok {
+				// A missing key evaluates to null. Merge with null deliberately relaxes the property
+				// to any under the current ExprType.Merge implementation.
+				o.Props[k] = t.Merge(NullType{})
+			}
 		}
 	}
 

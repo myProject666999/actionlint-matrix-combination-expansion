@@ -1,0 +1,12 @@
+on: push
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        os: [ubuntu-latest]
+        include:
+          - {}
+        exclude: []
+    steps:
+      - run: echo ${{ matrix.os }}
